@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 """
-GitLab CLI MCP Server
-A Model Context Protocol server that wraps the glab CLI tool.
+Dynamic GitLab CLI MCP Server
+A Model Context Protocol server that dynamically discovers and wraps glab CLI commands.
 """
 
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Set
 
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
-from pydantic import AnyUrl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("glab-mcp")
+logger = logging.getLogger("glab-mcp-dynamic")
 
-server = Server("glab-mcp")
+server = Server("glab-mcp-dynamic")
+
+# Cache for discovered commands
+_command_cache: Optional[Dict[str, Any]] = None
+_cache_timestamp: Optional[float] = None
+CACHE_TTL = 300  # 5 minutes
 
 async def run_glab_command(args: List[str], cwd: Optional[str] = None) -> Dict[str, Any]:
     """Execute a glab command and return the result."""
@@ -64,298 +69,390 @@ async def run_glab_command(args: List[str], cwd: Optional[str] = None) -> Dict[s
             "error": str(e)
         }
 
+async def discover_glab_commands() -> Dict[str, Any]:
+    """Dynamically discover all available glab commands and their help."""
+    global _command_cache, _cache_timestamp
+    
+    # Check cache
+    import time
+    current_time = time.time()
+    if (_command_cache is not None and _cache_timestamp is not None and 
+        current_time - _cache_timestamp < CACHE_TTL):
+        return _command_cache
+    
+    logger.info("Discovering glab commands...")
+    
+    # Get glab help
+    help_result = await run_glab_command(["--help"])
+    if not help_result["success"]:
+        logger.error("Failed to get glab help")
+        return {}
+    
+    commands = {}
+    help_text = help_result["stdout"]
+    
+    # Parse available commands from help output
+    # Look for "Available Commands:" section
+    lines = help_text.split('\n')
+    in_commands_section = False
+    
+    for line in lines:
+        line = line.strip()
+        
+        if 'Available Commands:' in line or 'Commands:' in line:
+            in_commands_section = True
+            continue
+            
+        if in_commands_section and line == '':
+            continue
+            
+        if in_commands_section and line.startswith('Flags:') or line.startswith('Global Flags:'):
+            break
+            
+        if in_commands_section and line:
+            # Parse command line: "  command    description"
+            parts = line.split()
+            if len(parts) >= 2 and not line.startswith(' '):
+                command = parts[0]
+                if command and not command.startswith('-'):
+                    # Get detailed help for this command
+                    cmd_help = await get_command_help(command)
+                    commands[command] = cmd_help
+    
+    # Cache the results
+    _command_cache = commands
+    _cache_timestamp = current_time
+    
+    logger.info(f"Discovered {len(commands)} glab commands")
+    return commands
+
+async def get_command_help(command: str) -> Dict[str, Any]:
+    """Get detailed help for a specific glab command."""
+    help_result = await run_glab_command([command, "--help"])
+    
+    if not help_result["success"]:
+        return {
+            "name": command,
+            "description": f"Execute glab {command} command",
+            "usage": f"glab {command}",
+            "flags": [],
+            "subcommands": []
+        }
+    
+    help_text = help_result["stdout"]
+    
+    # Parse the help text
+    description = ""
+    usage = ""
+    flags = []
+    subcommands = []
+    
+    lines = help_text.split('\n')
+    current_section = None
+    
+    for line in lines:
+        line_stripped = line.strip()
+        
+        # Extract description (usually first non-empty line after command name)
+        if not description and line_stripped and not line_stripped.startswith('Usage:'):
+            if command in line_stripped.lower() or 'command' in line_stripped.lower():
+                description = line_stripped
+        
+        # Extract usage
+        if line_stripped.startswith('Usage:'):
+            usage = line_stripped.replace('Usage:', '').strip()
+            
+        # Identify sections
+        if line_stripped in ['Flags:', 'Options:', 'Global Flags:']:
+            current_section = 'flags'
+            continue
+        elif line_stripped in ['Available Commands:', 'Commands:']:
+            current_section = 'subcommands'
+            continue
+        elif line_stripped.startswith('Examples:') or line_stripped.startswith('Use "'):
+            current_section = None
+            continue
+            
+        # Parse flags
+        if current_section == 'flags' and line.startswith('  '):
+            flag_match = re.match(r'\s*(-\w|--[\w-]+)', line)
+            if flag_match:
+                flag_name = flag_match.group(1)
+                flag_desc = line[flag_match.end():].strip()
+                # Remove type hints like [string] or [int]
+                flag_desc = re.sub(r'\s*\[[\w\s,]+\]', '', flag_desc)
+                flags.append({
+                    "name": flag_name,
+                    "description": flag_desc
+                })
+        
+        # Parse subcommands
+        elif current_section == 'subcommands' and line.startswith('  '):
+            sub_parts = line.strip().split()
+            if sub_parts:
+                subcommand = sub_parts[0]
+                sub_desc = ' '.join(sub_parts[1:]) if len(sub_parts) > 1 else ""
+                subcommands.append({
+                    "name": subcommand,
+                    "description": sub_desc
+                })
+    
+    return {
+        "name": command,
+        "description": description or f"Execute glab {command} command",
+        "usage": usage or f"glab {command}",
+        "flags": flags,
+        "subcommands": subcommands
+    }
+
+def create_dynamic_tool_schema(command_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a dynamic JSON schema for a glab command."""
+    properties = {
+        "args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": f"Command arguments for 'glab {command_info['name']}'"
+        }
+    }
+    
+    # Add common options
+    if command_info.get("flags"):
+        properties["common_flags"] = {
+            "type": "object",
+            "description": "Common flags (will be converted to CLI arguments)",
+            "properties": {}
+        }
+        
+        for flag in command_info["flags"]:
+            flag_name = flag["name"].lstrip('-').replace('-', '_')
+            properties["common_flags"]["properties"][flag_name] = {
+                "type": "string",
+                "description": flag["description"]
+            }
+    
+    # Add subcommand selection
+    if command_info.get("subcommands"):
+        properties["subcommand"] = {
+            "type": "string",
+            "enum": [sub["name"] for sub in command_info["subcommands"]],
+            "description": "Subcommand to execute"
+        }
+    
+    properties["cwd"] = {
+        "type": "string",
+        "description": "Working directory for the command"
+    }
+    
+    properties["format"] = {
+        "type": "string",
+        "enum": ["json", "table", "text"],
+        "description": "Output format (if supported by the command)"
+    }
+    
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": []
+    }
+
 @server.list_tools()
 async def handle_list_tools() -> List[types.Tool]:
-    """List available glab tools."""
-    return [
-        types.Tool(
-            name="glab_auth_status",
-            description="Check GitLab authentication status",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_repo_list",
-            description="List GitLab repositories",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "group": {"type": "string", "description": "Filter by group"},
-                    "owned": {"type": "boolean", "description": "Show only owned repos"},
-                    "starred": {"type": "boolean", "description": "Show only starred repos"},
-                    "limit": {"type": "integer", "description": "Limit number of results"}
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_issue_list",
-            description="List issues in a repository",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"},
-                    "state": {"type": "string", "enum": ["opened", "closed", "all"], "description": "Issue state"},
-                    "assignee": {"type": "string", "description": "Filter by assignee"},
-                    "author": {"type": "string", "description": "Filter by author"},
-                    "labels": {"type": "string", "description": "Filter by labels (comma-separated)"},
-                    "milestone": {"type": "string", "description": "Filter by milestone"},
-                    "limit": {"type": "integer", "description": "Limit number of results"}
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_issue_create",
-            description="Create a new issue",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"},
-                    "title": {"type": "string", "description": "Issue title"},
-                    "description": {"type": "string", "description": "Issue description"},
-                    "assignee": {"type": "string", "description": "Assignee username"},
-                    "labels": {"type": "string", "description": "Labels (comma-separated)"},
-                    "milestone": {"type": "string", "description": "Milestone"}
-                },
-                "required": ["title"]
-            }
-        ),
-        types.Tool(
-            name="glab_mr_list",
-            description="List merge requests in a repository",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"},
-                    "state": {"type": "string", "enum": ["opened", "closed", "merged", "all"], "description": "MR state"},
-                    "author": {"type": "string", "description": "Filter by author"},
-                    "assignee": {"type": "string", "description": "Filter by assignee"},
-                    "reviewer": {"type": "string", "description": "Filter by reviewer"},
-                    "labels": {"type": "string", "description": "Filter by labels (comma-separated)"},
-                    "target_branch": {"type": "string", "description": "Filter by target branch"},
-                    "source_branch": {"type": "string", "description": "Filter by source branch"},
-                    "limit": {"type": "integer", "description": "Limit number of results"}
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_mr_create",
-            description="Create a new merge request",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"},
-                    "title": {"type": "string", "description": "MR title"},
-                    "description": {"type": "string", "description": "MR description"},
-                    "source_branch": {"type": "string", "description": "Source branch"},
-                    "target_branch": {"type": "string", "description": "Target branch (default: main)"},
-                    "assignee": {"type": "string", "description": "Assignee username"},
-                    "reviewer": {"type": "string", "description": "Reviewer username"},
-                    "labels": {"type": "string", "description": "Labels (comma-separated)"},
-                    "milestone": {"type": "string", "description": "Milestone"},
-                    "draft": {"type": "boolean", "description": "Create as draft MR"}
-                },
-                "required": ["title"]
-            }
-        ),
-        types.Tool(
-            name="glab_pipeline_list",
-            description="List CI/CD pipelines",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"},
-                    "status": {"type": "string", "enum": ["running", "pending", "success", "failed", "canceled", "skipped"], "description": "Pipeline status"},
-                    "ref": {"type": "string", "description": "Filter by branch/tag"},
-                    "limit": {"type": "integer", "description": "Limit number of results"}
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_project_info",
-            description="Get project information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string", "description": "Repository (owner/name or URL)"}
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="glab_raw_command",
-            description="Execute a raw glab command with custom arguments",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Command arguments (without 'glab')"
+    """Dynamically list all available glab tools."""
+    try:
+        commands = await discover_glab_commands()
+        tools = []
+        
+        # Add the raw command tool
+        tools.append(
+            types.Tool(
+                name="glab_raw",
+                description="Execute any glab command with full argument control",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Complete command arguments (without 'glab')"
+                        },
+                        "cwd": {
+                            "type": "string",
+                            "description": "Working directory"
+                        }
                     },
-                    "cwd": {"type": "string", "description": "Working directory"}
-                },
-                "required": ["args"]
-            }
+                    "required": ["args"]
+                }
+            )
         )
-    ]
+        
+        # Add dynamic tools for each discovered command
+        for cmd_name, cmd_info in commands.items():
+            tool_name = f"glab_{cmd_name}".replace('-', '_')
+            
+            description = cmd_info.get("description", f"Execute glab {cmd_name}")
+            if cmd_info.get("subcommands"):
+                subcommand_names = [sub["name"] for sub in cmd_info["subcommands"]]
+                description += f". Subcommands: {', '.join(subcommand_names)}"
+            
+            tools.append(
+                types.Tool(
+                    name=tool_name,
+                    description=description,
+                    inputSchema=create_dynamic_tool_schema(cmd_info)
+                )
+            )
+        
+        # Add help/discovery tools
+        tools.append(
+            types.Tool(
+                name="glab_help",
+                description="Get help for any glab command or subcommand",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "Command to get help for (e.g., 'issue', 'mr create')"
+                        }
+                    },
+                    "required": ["command"]
+                }
+            )
+        )
+        
+        tools.append(
+            types.Tool(
+                name="glab_discover",
+                description="Force re-discovery of available glab commands (clears cache)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            )
+        )
+        
+        logger.info(f"Generated {len(tools)} dynamic tools")
+        return tools
+        
+    except Exception as e:
+        logger.error(f"Error generating tools: {e}")
+        # Return minimal set on error
+        return [
+            types.Tool(
+                name="glab_raw",
+                description="Execute any glab command (fallback mode)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Command arguments"
+                        }
+                    },
+                    "required": ["args"]
+                }
+            )
+        ]
+
+def build_command_args(command: str, arguments: Dict[str, Any]) -> List[str]:
+    """Build glab command arguments from tool arguments."""
+    args = [command]
+    
+    # Add subcommand if specified
+    if arguments.get("subcommand"):
+        args.append(arguments["subcommand"])
+    
+    # Add custom args
+    if arguments.get("args"):
+        args.extend(arguments["args"])
+    
+    # Convert common flags
+    if arguments.get("common_flags"):
+        for flag_name, flag_value in arguments["common_flags"].items():
+            if flag_value:  # Only add non-empty values
+                cli_flag = "--" + flag_name.replace('_', '-')
+                args.extend([cli_flag, str(flag_value)])
+    
+    # Add format flag if specified and not already present
+    if arguments.get("format") and not any(arg.startswith("--format") for arg in args):
+        args.extend(["--format", arguments["format"]])
+    
+    return args
 
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: Dict[str, Any] | None
 ) -> List[types.TextContent]:
-    """Handle tool calls."""
+    """Handle dynamic tool calls."""
     if arguments is None:
         arguments = {}
     
     try:
-        if name == "glab_auth_status":
-            result = await run_glab_command(["auth", "status"])
-            
-        elif name == "glab_repo_list":
-            args = ["repo", "list", "--format", "json"]
-            if arguments.get("group"):
-                args.extend(["--group", arguments["group"]])
-            if arguments.get("owned"):
-                args.append("--owned")
-            if arguments.get("starred"):
-                args.append("--starred")
-            if arguments.get("limit"):
-                args.extend(["--limit", str(arguments["limit"])])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_issue_list":
-            args = ["issue", "list", "--format", "json"]
-            if arguments.get("repo"):
-                args.extend(["-R", arguments["repo"]])
-            if arguments.get("state"):
-                args.extend(["--state", arguments["state"]])
-            if arguments.get("assignee"):
-                args.extend(["--assignee", arguments["assignee"]])
-            if arguments.get("author"):
-                args.extend(["--author", arguments["author"]])
-            if arguments.get("labels"):
-                args.extend(["--labels", arguments["labels"]])
-            if arguments.get("milestone"):
-                args.extend(["--milestone", arguments["milestone"]])
-            if arguments.get("limit"):
-                args.extend(["--limit", str(arguments["limit"])])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_issue_create":
-            args = ["issue", "create"]
-            if arguments.get("repo"):
-                args.extend(["-R", arguments["repo"]])
-            args.extend(["--title", arguments["title"]])
-            if arguments.get("description"):
-                args.extend(["--description", arguments["description"]])
-            if arguments.get("assignee"):
-                args.extend(["--assignee", arguments["assignee"]])
-            if arguments.get("labels"):
-                args.extend(["--labels", arguments["labels"]])
-            if arguments.get("milestone"):
-                args.extend(["--milestone", arguments["milestone"]])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_mr_list":
-            args = ["mr", "list", "--format", "json"]
-            if arguments.get("repo"):
-                args.extend(["-R", arguments["repo"]])
-            if arguments.get("state"):
-                args.extend(["--state", arguments["state"]])
-            if arguments.get("author"):
-                args.extend(["--author", arguments["author"]])
-            if arguments.get("assignee"):
-                args.extend(["--assignee", arguments["assignee"]])
-            if arguments.get("reviewer"):
-                args.extend(["--reviewer", arguments["reviewer"]])
-            if arguments.get("labels"):
-                args.extend(["--labels", arguments["labels"]])
-            if arguments.get("target_branch"):
-                args.extend(["--target-branch", arguments["target_branch"]])
-            if arguments.get("source_branch"):
-                args.extend(["--source-branch", arguments["source_branch"]])
-            if arguments.get("limit"):
-                args.extend(["--limit", str(arguments["limit"])])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_mr_create":
-            args = ["mr", "create"]
-            if arguments.get("repo"):
-                args.extend(["-R", arguments["repo"]])
-            args.extend(["--title", arguments["title"]])
-            if arguments.get("description"):
-                args.extend(["--description", arguments["description"]])
-            if arguments.get("source_branch"):
-                args.extend(["--source-branch", arguments["source_branch"]])
-            if arguments.get("target_branch"):
-                args.extend(["--target-branch", arguments["target_branch"]])
-            if arguments.get("assignee"):
-                args.extend(["--assignee", arguments["assignee"]])
-            if arguments.get("reviewer"):
-                args.extend(["--reviewer", arguments["reviewer"]])
-            if arguments.get("labels"):
-                args.extend(["--labels", arguments["labels"]])
-            if arguments.get("milestone"):
-                args.extend(["--milestone", arguments["milestone"]])
-            if arguments.get("draft"):
-                args.append("--draft")
-            result = await run_glab_command(args)
-            
-        elif name == "glab_pipeline_list":
-            args = ["pipeline", "list", "--format", "json"]
-            if arguments.get("repo"):
-                args.extend(["-R", arguments["repo"]])
-            if arguments.get("status"):
-                args.extend(["--status", arguments["status"]])
-            if arguments.get("ref"):
-                args.extend(["--ref", arguments["ref"]])
-            if arguments.get("limit"):
-                args.extend(["--limit", str(arguments["limit"])])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_project_info":
-            args = ["repo", "view", "--format", "json"]
-            if arguments.get("repo"):
-                args.append(arguments["repo"])
-            result = await run_glab_command(args)
-            
-        elif name == "glab_raw_command":
+        if name == "glab_raw":
             result = await run_glab_command(
                 arguments["args"], 
                 arguments.get("cwd")
             )
+        
+        elif name == "glab_help":
+            command = arguments["command"]
+            # Split command into parts (e.g., "mr create" -> ["mr", "create"])
+            cmd_parts = command.split()
+            help_args = cmd_parts + ["--help"]
+            result = await run_glab_command(help_args)
+        
+        elif name == "glab_discover":
+            global _command_cache, _cache_timestamp
+            _command_cache = None
+            _cache_timestamp = None
+            await discover_glab_commands()
+            return [types.TextContent(
+                type="text", 
+                text="✅ Glab commands re-discovered. Use glab_help to see available commands."
+            )]
+        
+        elif name.startswith("glab_"):
+            # Extract command name from tool name
+            command = name[5:].replace('_', '-')  # Remove 'glab_' prefix
             
+            # Build command arguments
+            cmd_args = build_command_args(command, arguments)
+            
+            result = await run_glab_command(cmd_args, arguments.get("cwd"))
+        
         else:
             raise ValueError(f"Unknown tool: {name}")
         
-        # Format the response
+        # Format response
         if result["success"]:
+            response_parts = []
+            
             if "data" in result:
-                # JSON data available
-                response = f"Command executed successfully:\n\n"
-                response += f"JSON Output:\n{json.dumps(result['data'], indent=2)}"
-                if result["stderr"]:
-                    response += f"\n\nWarnings/Info:\n{result['stderr']}"
+                response_parts.append("✅ Command executed successfully")
+                response_parts.append(f"JSON Output:\n```json\n{json.dumps(result['data'], indent=2)}\n```")
+            elif result["stdout"]:
+                response_parts.append("✅ Command executed successfully")
+                response_parts.append(f"Output:\n```\n{result['stdout']}\n```")
             else:
-                # Plain text output
-                response = f"Command executed successfully:\n\n{result['stdout']}"
-                if result["stderr"]:
-                    response += f"\n\nWarnings/Info:\n{result['stderr']}"
-        else:
-            response = f"Command failed (exit code {result['returncode']}):\n\n"
+                response_parts.append("✅ Command executed successfully (no output)")
+            
             if result["stderr"]:
-                response += f"Error: {result['stderr']}\n"
+                response_parts.append(f"Warnings/Info:\n```\n{result['stderr']}\n```")
+            
+            response = "\n\n".join(response_parts)
+        else:
+            response_parts = [f"❌ Command failed (exit code {result['returncode']})"]
+            
+            if result["stderr"]:
+                response_parts.append(f"Error:\n```\n{result['stderr']}\n```")
             if result["stdout"]:
-                response += f"Output: {result['stdout']}\n"
+                response_parts.append(f"Output:\n```\n{result['stdout']}\n```")
             if "error" in result:
-                response += f"Exception: {result['error']}"
+                response_parts.append(f"Exception: {result['error']}")
+            
+            response = "\n\n".join(response_parts)
         
         return [types.TextContent(type="text", text=response)]
         
@@ -363,27 +460,18 @@ async def handle_call_tool(
         logger.error(f"Error in tool {name}: {e}")
         return [types.TextContent(
             type="text", 
-            text=f"Error executing {name}: {str(e)}"
+            text=f"❌ Error executing {name}: {str(e)}"
         )]
 
-def main():
-    """Main entry point for the GitLab MCP server."""
-    import os
-    
-    # Set up logging based on environment
-    if os.getenv("GLAB_MCP_DEBUG"):
-        logging.getLogger().setLevel(logging.DEBUG)
-    
+async def main():
+    # Pre-warm the command cache
     try:
-        asyncio.run(run_server())
-    except KeyboardInterrupt:
-        logger.info("Server shutdown requested")
+        await discover_glab_commands()
+        logger.info("✅ Glab command discovery completed")
     except Exception as e:
-        logger.error(f"Server error: {e}")
-        sys.exit(1)
-
-async def run_server():
-    """Run the MCP server."""
+        logger.warning(f"Initial command discovery failed: {e}")
+    
+    # Run the server using stdin/stdout streams
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -392,4 +480,4 @@ async def run_server():
         )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
