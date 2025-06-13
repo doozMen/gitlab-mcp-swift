@@ -224,7 +224,7 @@ def create_dynamic_tool_schema(command_info: Dict[str, Any]) -> Dict[str, Any]:
         "args": {
             "type": "array",
             "items": {"type": "string"},
-            "description": f"Command arguments for 'glab {command_info['name']}'",
+            "description": f"Additional arguments for 'glab {command_info['name']}'. Examples: ['123'] for MR number, ['--assignee=@me'] for filters",
         }
     }
 
@@ -232,7 +232,7 @@ def create_dynamic_tool_schema(command_info: Dict[str, Any]) -> Dict[str, Any]:
     if command_info.get("flags"):
         properties["common_flags"] = {
             "type": "object",
-            "description": "Common flags (will be converted to CLI arguments)",
+            "description": "Common flags (will be converted to CLI arguments). Example: {'assignee': '@me', 'label': 'bug'}",
             "properties": {},
         }
 
@@ -245,21 +245,27 @@ def create_dynamic_tool_schema(command_info: Dict[str, Any]) -> Dict[str, Any]:
 
     # Add subcommand selection
     if command_info.get("subcommands"):
+        subcommand_desc = "Subcommand to execute. Examples: "
+        examples = []
+        for sub in command_info["subcommands"][:3]:  # Show first 3 examples
+            examples.append(f"'{sub['name']}' - {sub['description']}")
+        subcommand_desc += ", ".join(examples)
+        
         properties["subcommand"] = {
             "type": "string",
             "enum": [sub["name"] for sub in command_info["subcommands"]],
-            "description": "Subcommand to execute",
+            "description": subcommand_desc,
         }
 
     properties["cwd"] = {
         "type": "string",
-        "description": "Working directory for the command",
+        "description": "Working directory (optional). Uses current directory if not specified",
     }
 
     properties["format"] = {
         "type": "string",
         "enum": ["json", "table", "text"],
-        "description": "Output format (if supported by the command)",
+        "description": "Output format (if supported). 'json' for structured data, 'table' for formatted tables, 'text' for plain text",
     }
 
     return {"type": "object", "properties": properties, "required": []}
@@ -276,16 +282,16 @@ async def handle_list_tools() -> List[types.Tool]:
         tools.append(
             types.Tool(
                 name="glab_raw",
-                description="Execute any glab command with full argument control",
+                description="Execute any glab command with full argument control. Use when you need precise control over command arguments. Example: args=['mr', 'list', '--assignee=@me', '--state=opened']",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "args": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Complete command arguments (without 'glab')",
+                            "description": "Complete command arguments (without 'glab'). Example: ['mr', 'list', '--assignee=@me']",
                         },
-                        "cwd": {"type": "string", "description": "Working directory"},
+                        "cwd": {"type": "string", "description": "Working directory (optional)"},
                     },
                     "required": ["args"],
                 },
@@ -297,9 +303,24 @@ async def handle_list_tools() -> List[types.Tool]:
             tool_name = f"glab_{cmd_name}".replace("-", "_")
 
             description = cmd_info.get("description", f"Execute glab {cmd_name}")
+            
+            # Add command-specific examples
+            if cmd_name == "mr":
+                description += ". Examples: List MRs with subcommand='list', Create MR with subcommand='create', View MR #123 with subcommand='view' args=['123']"
+            elif cmd_name == "issue":
+                description += ". Examples: List issues with subcommand='list', Create issue with subcommand='create', Close issue #45 with subcommand='close' args=['45']"
+            elif cmd_name == "repo":
+                description += ". Examples: Clone repo with subcommand='clone' args=['owner/repo'], Fork with subcommand='fork'"
+            elif cmd_name == "ci":
+                description += ". Examples: View pipelines with subcommand='view', List CI jobs with subcommand='list'"
+            elif cmd_name == "api":
+                description += ". Example: args=['GET', '/projects/:id/merge_requests'] to list MRs via API"
+            
             if cmd_info.get("subcommands"):
-                subcommand_names = [sub["name"] for sub in cmd_info["subcommands"]]
-                description += f". Subcommands: {', '.join(subcommand_names)}"
+                subcommand_names = [sub["name"] for sub in cmd_info["subcommands"][:5]]  # Show first 5
+                if len(cmd_info["subcommands"]) > 5:
+                    subcommand_names.append("...")
+                description += f". Available: {', '.join(subcommand_names)}"
 
             tools.append(
                 types.Tool(
@@ -313,13 +334,13 @@ async def handle_list_tools() -> List[types.Tool]:
         tools.append(
             types.Tool(
                 name="glab_help",
-                description="Get help for any glab command or subcommand",
+                description="Get detailed help for any glab command or subcommand. Shows available options, flags, and usage examples. Examples: command='mr' for merge request help, command='mr create' for creating MRs, command='issue list' for listing issues",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "Command to get help for (e.g., 'issue', 'mr create')",
+                            "description": "Command to get help for. Examples: 'mr', 'issue', 'mr create', 'repo clone'",
                         }
                     },
                     "required": ["command"],
@@ -330,8 +351,27 @@ async def handle_list_tools() -> List[types.Tool]:
         tools.append(
             types.Tool(
                 name="glab_discover",
-                description="Force re-discovery of available glab commands (clears cache)",
+                description="Force re-discovery of available glab commands (clears cache). Use this if you've updated glab or if commands seem outdated",
                 inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        )
+        
+        # Add examples tool
+        tools.append(
+            types.Tool(
+                name="glab_examples",
+                description="Get common usage examples for GitLab operations. Shows practical examples of frequent tasks like creating MRs, managing issues, working with CI/CD, etc.",
+                inputSchema={
+                    "type": "object", 
+                    "properties": {
+                        "topic": {
+                            "type": "string",
+                            "enum": ["mr", "issue", "ci", "repo", "api", "general"],
+                            "description": "Topic to get examples for. 'general' shows overview of common tasks"
+                        }
+                    },
+                    "required": []
+                },
             )
         )
 
@@ -358,6 +398,298 @@ async def handle_list_tools() -> List[types.Tool]:
                 },
             )
         ]
+
+
+def get_usage_examples(topic: str) -> str:
+    """Get usage examples for common GitLab operations."""
+    examples = {
+        "general": """# GitLab MCP Tool Usage Examples
+
+## Quick Start
+The GitLab MCP provides tools for interacting with GitLab. Here are the most common patterns:
+
+### Tool Naming Convention
+- `glab_mr` - Work with merge requests
+- `glab_issue` - Work with issues  
+- `glab_ci` - Work with CI/CD pipelines
+- `glab_repo` - Work with repositories
+- `glab_raw` - Execute any glab command directly
+
+### Basic Pattern
+Most tools follow this pattern:
+```
+tool_name: glab_{resource}
+parameters:
+  subcommand: "{action}"  # like 'list', 'create', 'view'
+  args: [...]            # additional arguments
+  format: "json"         # optional: get structured output
+```
+
+## Common Tasks
+
+1. **List your merge requests**
+   - Tool: `glab_mr`
+   - Parameters: `{"subcommand": "list", "args": ["--assignee=@me"]}`
+
+2. **Create a new issue**
+   - Tool: `glab_issue`
+   - Parameters: `{"subcommand": "create", "args": ["--title", "Bug: Login fails"]}`
+
+3. **View CI pipeline status**
+   - Tool: `glab_ci`
+   - Parameters: `{"subcommand": "view"}`
+
+4. **Get help for any command**
+   - Tool: `glab_help`
+   - Parameters: `{"command": "mr create"}`
+
+Use `glab_examples` with topic='mr', 'issue', 'ci', 'repo', or 'api' for specific examples.""",
+
+        "mr": """# Merge Request Examples
+
+## List Merge Requests
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "list",
+  "args": ["--assignee=@me", "--state=opened"],
+  "format": "json"
+}
+```
+
+## Create a Merge Request
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "create",
+  "args": ["--title", "Feature: Add dark mode", "--description", "Implements dark mode toggle"]
+}
+```
+
+## View a Specific MR
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "view", 
+  "args": ["123"]  # MR number
+}
+```
+
+## Approve an MR
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "approve",
+  "args": ["123"]
+}
+```
+
+## Update MR Description
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "update",
+  "args": ["123", "--description", "Updated description here"]
+}
+```
+
+## Add a Comment
+```
+Tool: glab_mr
+Parameters: {
+  "subcommand": "note",
+  "args": ["123", "-m", "LGTM! Ready to merge."]
+}
+```""",
+
+        "issue": """# Issue Examples
+
+## List Issues
+```
+Tool: glab_issue
+Parameters: {
+  "subcommand": "list",
+  "args": ["--assignee=@me", "--label=bug"],
+  "format": "json"
+}
+```
+
+## Create an Issue
+```
+Tool: glab_issue
+Parameters: {
+  "subcommand": "create",
+  "args": ["--title", "Bug: Login timeout", "--label", "bug", "--assignee", "@me"]
+}
+```
+
+## View Issue Details
+```
+Tool: glab_issue
+Parameters: {
+  "subcommand": "view",
+  "args": ["45"]  # Issue number
+}
+```
+
+## Close an Issue
+```
+Tool: glab_issue
+Parameters: {
+  "subcommand": "close",
+  "args": ["45"]
+}
+```
+
+## Add Issue Comment
+```
+Tool: glab_issue
+Parameters: {
+  "subcommand": "note", 
+  "args": ["45", "-m", "Fixed in PR #123"]
+}
+```""",
+
+        "ci": """# CI/CD Pipeline Examples
+
+## View Current Pipeline
+```
+Tool: glab_ci
+Parameters: {
+  "subcommand": "view"
+}
+```
+
+## List Recent Pipelines
+```
+Tool: glab_ci
+Parameters: {
+  "subcommand": "list",
+  "format": "json"
+}
+```
+
+## View Pipeline for Specific Branch
+```
+Tool: glab_ci
+Parameters: {
+  "subcommand": "view",
+  "args": ["--branch", "feature/dark-mode"]
+}
+```
+
+## Retry Failed Pipeline
+```
+Tool: glab_ci
+Parameters: {
+  "subcommand": "retry",
+  "args": ["12345"]  # Pipeline ID
+}
+```
+
+## View Job Logs
+```
+Tool: glab_job
+Parameters: {
+  "subcommand": "view",
+  "args": ["--log", "987654"]  # Job ID
+}
+```""",
+
+        "repo": """# Repository Examples
+
+## Clone a Repository
+```
+Tool: glab_repo
+Parameters: {
+  "subcommand": "clone",
+  "args": ["group/project"]
+}
+```
+
+## Fork a Repository
+```
+Tool: glab_repo
+Parameters: {
+  "subcommand": "fork",
+  "args": ["--clone"]
+}
+```
+
+## View Repository Info
+```
+Tool: glab_repo
+Parameters: {
+  "subcommand": "view",
+  "args": ["owner/repo"]
+}
+```
+
+## List User Repositories
+```
+Tool: glab_repo
+Parameters: {
+  "subcommand": "list",
+  "args": ["--mine"],
+  "format": "json"
+}
+```
+
+## Archive a Repository
+```
+Tool: glab_repo
+Parameters: {
+  "subcommand": "archive",
+  "args": ["owner/repo", "--yes"]
+}
+```""",
+
+        "api": """# GitLab API Examples
+
+## List Project Merge Requests
+```
+Tool: glab_api
+Parameters: {
+  "args": ["GET", "/projects/:id/merge_requests", "--paginate"]
+}
+```
+
+## Get User Info
+```
+Tool: glab_api
+Parameters: {
+  "args": ["GET", "/user"]
+}
+```
+
+## Create a Project Label
+```
+Tool: glab_api
+Parameters: {
+  "args": ["POST", "/projects/:id/labels", "-f", "name=priority", "-f", "color=#FF0000"]
+}
+```
+
+## Update Issue
+```
+Tool: glab_api
+Parameters: {
+  "args": ["PUT", "/projects/:id/issues/123", "-f", "state_event=close"]
+}
+```
+
+## Raw API with Custom Headers
+```
+Tool: glab_raw
+Parameters: {
+  "args": ["api", "GET", "/projects", "--header", "X-Custom: value", "--paginate"]
+}
+```
+
+Note: The API tool automatically handles authentication and pagination."""
+    }
+    
+    return examples.get(topic, examples["general"])
 
 
 def build_command_args(command: str, arguments: Dict[str, Any]) -> List[str]:
@@ -416,6 +748,16 @@ async def handle_call_tool(
                     text="✅ Glab commands re-discovered. Use glab_help to see available commands.",
                 )
             ]
+            
+        elif name == "glab_examples":
+            topic = arguments.get("topic", "general")
+            examples = get_usage_examples(topic)
+            return [
+                types.TextContent(
+                    type="text",
+                    text=examples,
+                )
+            ]
 
         elif name.startswith("glab_"):
             # Extract command name from tool name
@@ -453,10 +795,24 @@ async def handle_call_tool(
 
             if result["stderr"]:
                 response_parts.append(f"Error:\n```\n{result['stderr']}\n```")
+                
+                # Add helpful suggestions based on common errors
+                stderr_lower = result["stderr"].lower()
+                if "authentication" in stderr_lower or "401" in stderr_lower:
+                    response_parts.append("\n💡 **Tip**: This looks like an authentication issue. Try running `glab auth login` in your terminal.")
+                elif "not found" in stderr_lower or "404" in stderr_lower:
+                    response_parts.append("\n💡 **Tip**: The resource was not found. Check if the MR/issue number or repository name is correct.")
+                elif "permission" in stderr_lower or "403" in stderr_lower:
+                    response_parts.append("\n💡 **Tip**: You don't have permission to perform this action. Check your access rights.")
+                elif "no repository" in stderr_lower:
+                    response_parts.append("\n💡 **Tip**: Make sure you're in a Git repository or specify the repository with -R flag.")
+                    
             if result["stdout"]:
                 response_parts.append(f"Output:\n```\n{result['stdout']}\n```")
             if "error" in result:
                 response_parts.append(f"Exception: {result['error']}")
+                
+            response_parts.append("\n📚 Use `glab_help` with the command name for usage details, or `glab_examples` for practical examples.")
 
             response = "\n\n".join(response_parts)
 
