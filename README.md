@@ -63,6 +63,39 @@ cd glab-mcp
 pip install -e .
 ```
 
+## Running the Server
+
+**Important**: The MCP server must be running before it can be used by Claude or other AI assistants.
+
+### Start the Server
+
+After installation, run the server using the provided script:
+
+```bash
+python run_server.py
+```
+
+This will start the GitLab MCP server and keep it running. You should see output indicating the server is ready:
+
+```
+Starting GitLab MCP server...
+Server is running. Press Ctrl+C to stop.
+```
+
+Keep this terminal window open while using the MCP with Claude.
+
+### Alternative Methods
+
+You can also run the server directly:
+
+```bash
+# If installed via pip
+python -m glab_mcp
+
+# If running from source
+python src/glab_mcp/server.py
+```
+
 ## Configuration
 
 ### Claude Desktop

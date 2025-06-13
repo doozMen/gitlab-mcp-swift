@@ -44,7 +44,7 @@ Repository = "https://github.com/stijnwillems/glab-mcp"
 Issues = "https://github.com/stijnwillems/glab-mcp/issues"
 
 [project.scripts]
-glab-mcp-server = "glab_mcp.server:main"
+glab-mcp-server = "glab_mcp.server:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
