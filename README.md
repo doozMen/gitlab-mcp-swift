@@ -1,37 +1,36 @@
 # GitLab CLI MCP Server
 
-A Model Context Protocol (MCP) server that provides seamless integration between AI assistants (like Claude) and GitLab through the `glab` CLI tool.
+A dynamic Model Context Protocol (MCP) server that provides seamless integration between AI assistants (like Claude) and GitLab through the `glab` CLI tool. This server automatically discovers all available `glab` commands and exposes them as tools.
 
 ## Features
 
-- 🔧 **Full GitLab Integration**: Access issues, merge requests, pipelines, and repositories
+- 🔄 **Dynamic Command Discovery**: Automatically discovers and exposes all `glab` commands
+- 🔧 **Full GitLab Integration**: Access issues, merge requests, pipelines, repositories, and more
 - 🤖 **AI-Friendly**: Structured JSON responses optimized for AI assistants
 - 🛡️ **Secure**: Uses your existing `glab` authentication
-- 🚀 **Fast**: Direct CLI wrapper with minimal overhead
+- 🚀 **Fast**: Direct CLI wrapper with command caching
 - 📦 **Easy Setup**: Simple Python package installation
+- 🔍 **Self-Documenting**: Built-in help tool for exploring commands
 
 ## Available Tools
 
-### Repository Management
-- `glab_repo_list` - List repositories with filtering options
-- `glab_project_info` - Get detailed project information
+The server dynamically discovers and exposes all `glab` commands as tools. Common tools include:
 
-### Issue Management
-- `glab_issue_list` - List issues with comprehensive filtering
-- `glab_issue_create` - Create new issues with full metadata
+- `glab_auth` - Manage authentication
+- `glab_issue` - Work with issues
+- `glab_mr` - Manage merge requests
+- `glab_repo` - Work with repositories
+- `glab_ci` - Manage CI/CD pipelines
+- `glab_release` - Manage releases
+- `glab_api` - Make authenticated API requests
+- `glab_help` - Get detailed help for any command
+- `glab_raw` - Execute any glab command with full control
+- And many more...
 
-### Merge Request Management
-- `glab_mr_list` - List merge requests with advanced filtering
-- `glab_mr_create` - Create merge requests with all options
+### Special Tools
 
-### CI/CD Pipeline Management
-- `glab_pipeline_list` - List and filter CI/CD pipelines
-
-### Authentication
-- `glab_auth_status` - Check current authentication status
-
-### Raw Command Access
-- `glab_raw_command` - Execute any glab command directly
+- `glab_discover` - Force re-discovery of available commands
+- `glab_help` - Get detailed help for any glab command or subcommand
 
 ## Prerequisites
 

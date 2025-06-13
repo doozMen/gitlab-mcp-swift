@@ -99,25 +99,26 @@ async def discover_glab_commands() -> Dict[str, Any]:
     for line in lines:
         line = line.strip()
         
-        if 'Available Commands:' in line or 'Commands:' in line:
+        if 'Available Commands:' in line or 'Commands:' in line or 'CORE COMMANDS' in line:
             in_commands_section = True
             continue
             
         if in_commands_section and line == '':
             continue
             
-        if in_commands_section and line.startswith('Flags:') or line.startswith('Global Flags:'):
+        if in_commands_section and (line.startswith('FLAGS') or line.startswith('LEARN MORE')):
             break
             
         if in_commands_section and line:
-            # Parse command line: "  command    description"
-            parts = line.split()
-            if len(parts) >= 2 and not line.startswith(' '):
-                command = parts[0]
-                if command and not command.startswith('-'):
-                    # Get detailed help for this command
-                    cmd_help = await get_command_help(command)
-                    commands[command] = cmd_help
+            # Parse command line: "  command:    description" or "  command    description"
+            if ':' in line:
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    command = parts[0].strip()
+                    if command and not command.startswith('-'):
+                        # Get detailed help for this command
+                        cmd_help = await get_command_help(command)
+                        commands[command] = cmd_help
     
     # Cache the results
     _command_cache = commands
