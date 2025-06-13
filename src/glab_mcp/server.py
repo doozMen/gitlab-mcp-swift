@@ -16,6 +16,7 @@ import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
+from mcp.types import ServerCapabilities
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -482,7 +483,11 @@ async def main():
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name="glab-mcp-dynamic", server_version="0.1.0"
+                server_name="glab-mcp-dynamic",
+                server_version="0.1.0",
+                capabilities=ServerCapabilities(
+                    tools={}  # We provide tools dynamically
+                ),
             ),
         )
 
