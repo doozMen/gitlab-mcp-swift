@@ -12,10 +12,10 @@ actor GitLabMCPServer {
         self.gitlabCLI = GitLabCLI(logger: logger)
         
         self.server = Server(
-            name: "glab-mcp-dynamic",
-            version: "0.1.1",
+            name: "gitlab-mcp-swift",
+            version: "0.3.0",
             capabilities: .init(
-                prompts: nil,
+                prompts: .init(listChanged: false),
                 resources: nil,
                 tools: .init(listChanged: false)
             )
@@ -42,7 +42,7 @@ actor GitLabMCPServer {
                 throw MCPError.internalError("Server unavailable")
             }
             
-            return try await self.generateTools()
+            return await self.getStaticTools()
         }
         
         // Call Tool Handler
@@ -53,307 +53,420 @@ actor GitLabMCPServer {
             
             return try await self.handleToolCall(name: params.name, arguments: params.arguments)
         }
-    }
-    
-    private func generateTools() async throws -> ListTools.Result {
-        var tools: [Tool] = []
         
-        // Add the raw command tool
-        tools.append(Tool(
-            name: "glab_raw",
-            description: "Execute any glab command with full argument control. Use when you need precise control over command arguments. Example: args=['mr', 'list', '--assignee=@me', '--state=opened']",
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "args": .object([
-                        "type": .string("array"),
-                        "items": .object(["type": .string("string")]),
-                        "description": .string("Complete command arguments (without 'glab'). Example: ['mr', 'list', '--assignee=@me']")
-                    ]),
-                    "cwd": .object([
-                        "type": .string("string"),
-                        "description": .string("Working directory (optional)")
-                    ])
-                ]),
-                "required": .array([.string("args")])
-            ])
-        ))
-        
-        // Discover and add dynamic tools
-        do {
-            let commands = try await gitlabCLI.discoverCommands()
-            
-            for (cmdName, cmdInfo) in commands {
-                let toolName = "glab_\(cmdName.replacingOccurrences(of: "-", with: "_"))"
-                var description = cmdInfo.description
-                
-                // Add command-specific examples
-                switch cmdName {
-                case "mr":
-                    description += ". Examples: List MRs with subcommand='list', Create MR with subcommand='create', View MR #123 with subcommand='view' args=['123']"
-                case "issue":
-                    description += ". Examples: List issues with subcommand='list', Create issue with subcommand='create', Close issue #45 with subcommand='close' args=['45']"
-                case "repo":
-                    description += ". Examples: Clone repo with subcommand='clone' args=['owner/repo'], Fork with subcommand='fork'"
-                case "ci":
-                    description += ". Examples: View pipelines with subcommand='view', List CI jobs with subcommand='list'"
-                case "api":
-                    description += ". Example: args=['GET', '/projects/:id/merge_requests'] to list MRs via API"
-                default:
-                    break
-                }
-                
-                if !cmdInfo.subcommands.isEmpty {
-                    let subcommandNames = cmdInfo.subcommands.prefix(5).map { $0.name }
-                    description += ". Available: \(subcommandNames.joined(separator: ", "))"
-                    if cmdInfo.subcommands.count > 5 {
-                        description += "..."
-                    }
-                }
-                
-                let schema = createDynamicToolSchema(for: cmdInfo)
-                tools.append(Tool(
-                    name: toolName,
-                    description: description,
-                    inputSchema: try convertToValue(schema)
-                ))
+        // List Prompts Handler
+        await server.withMethodHandler(ListPrompts.self) { [weak self] _ in
+            guard let self = self else {
+                throw MCPError.internalError("Server unavailable")
             }
-        } catch {
-            logger.error("Failed to discover commands: \(error)")
+            
+            return await self.getPrompts()
         }
         
-        // Add help and discovery tools
-        tools.append(Tool(
-            name: "glab_help",
-            description: "Get detailed help for any glab command or subcommand. Shows available options, flags, and usage examples. Examples: command='mr' for merge request help, command='mr create' for creating MRs",
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "command": .object([
-                        "type": .string("string"),
-                        "description": .string("Command to get help for. Examples: 'mr', 'issue', 'mr create'")
-                    ])
+        // Get Prompt Handler
+        await server.withMethodHandler(GetPrompt.self) { [weak self] params in
+            guard let self = self else {
+                throw MCPError.internalError("Server unavailable")
+            }
+            
+            return try await self.getPrompt(name: params.name, arguments: params.arguments)
+        }
+    }
+    
+    private func getStaticTools() -> ListTools.Result {
+        let tools: [Tool] = [
+            // Merge Request operations
+            Tool(
+                name: "glab_mr",
+                description: """
+                Work with GitLab merge requests at Mediahuis (authenticated as stijn.willems).
+                Examples:
+                - List your MRs: subcommand="list", args=["--assignee=@me"]
+                - View MR #123: subcommand="view", args=["123"]
+                - Create MR: subcommand="create", args=["--title", "Fix: Memory leak", "--source-branch", "fix/memory"]
+                - List MRs for repo: subcommand="list", args=["--repo", "team/project"]
+                """,
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "subcommand": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("list"), .string("create"), .string("view"), .string("merge"), .string("close"), .string("reopen"), .string("update"), .string("approve"), .string("revoke"), .string("diff"), .string("checkout")]),
+                            "description": .string("The merge request operation to perform")
+                        ]),
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional arguments like MR number, flags, etc. Example: ['123'] for MR #123, or ['--assignee=@me', '--state=opened'] for filters")
+                        ]),
+                        "repo": .object([
+                            "type": .string("string"),
+                            "description": .string("Repository in OWNER/REPO format (optional, uses current repo if not specified)")
+                        ])
+                    ]),
+                    "required": .array([.string("subcommand")])
                 ]),
-                "required": .array([.string("command")])
-            ])
-        ))
+                annotations: .init(
+                    title: "GitLab Merge Requests",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                    idempotentHint: false
+                )
+            ),
+            
+            // Issue operations
+            Tool(
+                name: "glab_issue",
+                description: "Work with GitLab issues. Common operations: list (list issues), create (create new issue), view (view issue details), close (close an issue)",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "subcommand": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("list"), .string("create"), .string("view"), .string("close"), .string("reopen"), .string("update"), .string("delete"), .string("subscribe"), .string("unsubscribe"), .string("note")]),
+                            "description": .string("The issue operation to perform")
+                        ]),
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional arguments like issue number, flags, etc.")
+                        ]),
+                        "repo": .object([
+                            "type": .string("string"),
+                            "description": .string("Repository in OWNER/REPO format (optional)")
+                        ])
+                    ]),
+                    "required": .array([.string("subcommand")])
+                ])
+            ),
+            
+            // CI/CD operations
+            Tool(
+                name: "glab_ci",
+                description: "Work with GitLab CI/CD pipelines and jobs. Common operations: view (view pipeline status), list (list pipelines), run (trigger pipeline), retry (retry failed pipeline)",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "subcommand": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("view"), .string("list"), .string("run"), .string("retry"), .string("delete"), .string("cancel"), .string("trace"), .string("artifact")]),
+                            "description": .string("The CI/CD operation to perform")
+                        ]),
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional arguments like pipeline ID, job ID, flags, etc.")
+                        ]),
+                        "repo": .object([
+                            "type": .string("string"),
+                            "description": .string("Repository in OWNER/REPO format (optional)")
+                        ])
+                    ]),
+                    "required": .array([.string("subcommand")])
+                ])
+            ),
+            
+            // Repository operations
+            Tool(
+                name: "glab_repo",
+                description: "Work with GitLab repositories. Common operations: clone (clone a repo), fork (fork a repo), view (view repo details), archive (archive a repo)",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "subcommand": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("clone"), .string("fork"), .string("view"), .string("archive"), .string("unarchive"), .string("delete"), .string("create"), .string("list"), .string("mirror"), .string("contributors")]),
+                            "description": .string("The repository operation to perform")
+                        ]),
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional arguments like repo name, flags, etc.")
+                        ])
+                    ]),
+                    "required": .array([.string("subcommand")])
+                ])
+            ),
+            
+            // API operations
+            Tool(
+                name: "glab_api",
+                description: "Make authenticated requests to the GitLab API. Supports GET, POST, PUT, PATCH, DELETE methods.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "method": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("GET"), .string("POST"), .string("PUT"), .string("PATCH"), .string("DELETE")]),
+                            "description": .string("HTTP method to use")
+                        ]),
+                        "endpoint": .object([
+                            "type": .string("string"),
+                            "description": .string("API endpoint path, e.g., '/projects/:id/merge_requests'")
+                        ]),
+                        "data": .object([
+                            "type": .string("string"),
+                            "description": .string("JSON data for POST/PUT/PATCH requests (optional)")
+                        ]),
+                        "headers": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional headers in 'key:value' format (optional)")
+                        ])
+                    ]),
+                    "required": .array([.string("method"), .string("endpoint")])
+                ])
+            ),
+            
+            // Authentication
+            Tool(
+                name: "glab_auth",
+                description: "Manage GitLab authentication. Operations: login (authenticate), status (check auth status), logout (remove authentication)",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "subcommand": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("login"), .string("status"), .string("logout")]),
+                            "description": .string("The authentication operation to perform")
+                        ]),
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Additional arguments like --hostname, --token, etc.")
+                        ])
+                    ]),
+                    "required": .array([.string("subcommand")])
+                ])
+            ),
+            
+            // Version information
+            Tool(
+                name: "glab_version",
+                description: """
+                Show version information for both the GitLab MCP server and glab CLI.
+                Current authentication: stijn.willems@gitlab.mediahuisgroup.com
+                Always use this first to verify the server is working correctly.
+                """,
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([:]),
+                    "required": .array([])
+                ])
+            ),
+            
+            // Raw command execution
+            Tool(
+                name: "glab_raw",
+                description: "Execute any glab command directly. Use this for commands not covered by other tools.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "args": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Complete command arguments (without 'glab'). Example: ['config', 'get', 'editor']")
+                        ])
+                    ]),
+                    "required": .array([.string("args")])
+                ])
+            )
+        ]
         
-        tools.append(Tool(
-            name: "glab_discover",
-            description: "Force re-discovery of available glab commands (clears cache). Use this if you've updated glab or if commands seem outdated",
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([:]),
-                "required": .array([])
-            ])
-        ))
-        
-        tools.append(Tool(
-            name: "glab_examples",
-            description: "Get common usage examples for GitLab operations. Shows practical examples of frequent tasks",
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "topic": .object([
-                        "type": .string("string"),
-                        "enum": .array([.string("mr"), .string("issue"), .string("ci"), .string("repo"), .string("api"), .string("general")]),
-                        "description": .string("Topic to get examples for. 'general' shows overview of common tasks")
-                    ])
-                ]),
-                "required": .array([])
-            ])
-        ))
-        
-        logger.info("Generated \(tools.count) dynamic tools")
+        logger.info("Providing \(tools.count) static tools")
         return ListTools.Result(tools: tools)
     }
     
-    private func convertToValue(_ object: Any) throws -> Value {
-        if let dict = object as? [String: Any] {
-            var result: [String: Value] = [:]
-            for (key, value) in dict {
-                result[key] = try convertToValue(value)
-            }
-            return .object(result)
-        } else if let array = object as? [Any] {
-            return .array(try array.map { try convertToValue($0) })
-        } else if let string = object as? String {
-            return .string(string)
-        } else if let number = object as? Int {
-            return .int(number)
-        } else if let number = object as? Double {
-            return .double(number)
-        } else if let bool = object as? Bool {
-            return .bool(bool)
-        } else if object is NSNull {
-            return .null
-        } else {
-            throw MCPError.internalError("Cannot convert value: \(object)")
-        }
-    }
-    
-    private func createDynamicToolSchema(for command: GitLabCommand) -> [String: Any] {
-        var properties: [String: Any] = [
-            "args": [
-                "type": "array",
-                "items": ["type": "string"],
-                "description": "Additional arguments for 'glab \(command.name)'. Examples: ['123'] for MR number, ['--assignee=@me'] for filters"
-            ]
-        ]
-        
-        // Add common flags
-        if !command.flags.isEmpty {
-            var flagProperties: [String: Any] = [:]
-            
-            for flag in command.flags {
-                let flagName = flag.name
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-                    .replacingOccurrences(of: "-", with: "_")
-                
-                flagProperties[flagName] = [
-                    "type": "string",
-                    "description": flag.description
-                ]
-            }
-            
-            properties["common_flags"] = [
-                "type": "object",
-                "description": "Common flags (will be converted to CLI arguments). Example: {'assignee': '@me', 'label': 'bug'}",
-                "properties": flagProperties
-            ]
-        }
-        
-        // Add subcommand selection
-        if !command.subcommands.isEmpty {
-            var subcommandDesc = "Subcommand to execute. Examples: "
-            let examples = command.subcommands.prefix(3).map { "'\($0.name)' - \($0.description)" }
-            subcommandDesc += examples.joined(separator: ", ")
-            
-            properties["subcommand"] = [
-                "type": "string",
-                "enum": command.subcommands.map { $0.name },
-                "description": subcommandDesc
-            ]
-        }
-        
-        properties["cwd"] = [
-            "type": "string",
-            "description": "Working directory (optional). Uses current directory if not specified"
-        ]
-        
-        properties["format"] = [
-            "type": "string",
-            "enum": ["json", "table", "text"],
-            "description": "Output format (if supported). 'json' for structured data"
-        ]
-        
-        return [
-            "type": "object",
-            "properties": properties,
-            "required": []
-        ]
-    }
-    
-    private func handleToolCall(name: String, arguments: [String: Any]?) async throws -> CallTool.Result {
+    private func handleToolCall(name: String, arguments: [String: Value]?) async throws -> CallTool.Result {
         let args = arguments ?? [:]
         
-        // Debug logging
         logger.debug("Tool call: \(name)")
         logger.debug("Arguments: \(args)")
         
         switch name {
+        case "glab_mr":
+            return try await handleMergeRequest(args: args)
+            
+        case "glab_issue":
+            return try await handleIssue(args: args)
+            
+        case "glab_ci":
+            return try await handleCI(args: args)
+            
+        case "glab_repo":
+            return try await handleRepo(args: args)
+            
+        case "glab_api":
+            return try await handleAPI(args: args)
+            
+        case "glab_auth":
+            return try await handleAuth(args: args)
+            
+        case "glab_version":
+            return try await handleVersion()
+            
         case "glab_raw":
-            guard let cmdArgs = args["args"] as? [String] else {
-                logger.error("Failed to get args array from: \(args)")
+            guard case .array(let argsArray) = args["args"],
+                  let cmdArgs = argsArray.compactMap({ $0.stringValue }) as? [String] else {
                 throw MCPError.invalidParams("args array is required")
             }
-            let result = try await gitlabCLI.runCommand(args: cmdArgs, cwd: args["cwd"] as? String)
+            let result = try await gitlabCLI.runCommand(args: cmdArgs)
             return formatResult(result)
-            
-        case "glab_help":
-            guard let command = args["command"] as? String else {
-                throw MCPError.invalidParams("command is required")
-            }
-            let cmdParts = command.split(separator: " ").map(String.init)
-            let helpArgs = cmdParts + ["--help"]
-            let result = try await gitlabCLI.runCommand(args: helpArgs)
-            return formatResult(result)
-            
-        case "glab_discover":
-            await gitlabCLI.clearCache()
-            _ = try await gitlabCLI.discoverCommands()
-            return CallTool.Result(
-                content: [.text("✅ Glab commands re-discovered. Use glab_help to see available commands.")],
-                isError: false
-            )
-            
-        case "glab_examples":
-            let topic = args["topic"] as? String ?? "general"
-            let examples = getUsageExamples(for: topic)
-            return CallTool.Result(
-                content: [.text(examples)],
-                isError: false
-            )
             
         default:
-            if name.hasPrefix("glab_") {
-                // Extract command name from tool name
-                let command = String(name.dropFirst(5)).replacingOccurrences(of: "_", with: "-")
-                let cmdArgs = buildCommandArgs(command: command, arguments: args)
-                logger.debug("Final command args: \(cmdArgs)")
-                let result = try await gitlabCLI.runCommand(args: cmdArgs, cwd: args["cwd"] as? String)
-                return formatResult(result)
-            } else {
-                throw MCPError.methodNotFound("Unknown tool: \(name)")
-            }
+            throw MCPError.methodNotFound("Unknown tool: \(name)")
         }
     }
     
-    private func buildCommandArgs(command: String, arguments: [String: Any]) -> [String] {
-        var args = [command]
-        
-        // Add subcommand if specified
-        if let subcommand = arguments["subcommand"] as? String {
-            args.append(subcommand)
+    // MARK: - Tool Handlers
+    
+    private func handleMergeRequest(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let subcommand) = args["subcommand"] else {
+            throw MCPError.invalidParams("subcommand is required for glab_mr")
         }
         
-        // Add custom args
-        if let customArgs = arguments["args"] as? [String] {
-            // Commands that don't have subcommands (they just take arguments directly)
-            let noSubcommandCommands = ["version", "help", "check-update", "changelog", "completion", "alias", "duo"]
-            
-            // For most commands, if no explicit subcommand was provided and args has elements,
-            // check if the first arg looks like a subcommand (not starting with -)
-            if arguments["subcommand"] == nil && 
-               !customArgs.isEmpty && 
-               !customArgs[0].hasPrefix("-") &&
-               !noSubcommandCommands.contains(command) {
-                // First arg is likely a subcommand
-                args.append(customArgs[0])
-                args.append(contentsOf: Array(customArgs.dropFirst()))
-            } else {
-                args.append(contentsOf: customArgs)
-            }
+        var cmdArgs = ["mr", subcommand]
+        
+        // Add repository if specified
+        if case .string(let repo) = args["repo"] {
+            cmdArgs.append(contentsOf: ["-R", repo])
         }
         
-        // Convert common flags
-        if let commonFlags = arguments["common_flags"] as? [String: Any] {
-            for (flagName, flagValue) in commonFlags {
-                if let value = flagValue as? String, !value.isEmpty {
-                    let cliFlag = "--" + flagName.replacingOccurrences(of: "_", with: "-")
-                    args.append(contentsOf: [cliFlag, value])
-                }
-            }
+        // Add additional arguments
+        if case .array(let argsArray) = args["args"],
+           let additionalArgs = argsArray.compactMap({ $0.stringValue }) as? [String] {
+            cmdArgs.append(contentsOf: additionalArgs)
         }
         
-        // Add format flag if specified and not already present
-        if let format = arguments["format"] as? String,
-           !args.contains(where: { $0.hasPrefix("--format") }) {
-            args.append(contentsOf: ["--format", format])
-        }
-        
-        return args
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
     }
+    
+    private func handleIssue(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let subcommand) = args["subcommand"] else {
+            throw MCPError.invalidParams("subcommand is required for glab_issue")
+        }
+        
+        var cmdArgs = ["issue", subcommand]
+        
+        // Add repository if specified
+        if case .string(let repo) = args["repo"] {
+            cmdArgs.append(contentsOf: ["-R", repo])
+        }
+        
+        // Add additional arguments
+        if case .array(let argsArray) = args["args"],
+           let additionalArgs = argsArray.compactMap({ $0.stringValue }) as? [String] {
+            cmdArgs.append(contentsOf: additionalArgs)
+        }
+        
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
+    }
+    
+    private func handleCI(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let subcommand) = args["subcommand"] else {
+            throw MCPError.invalidParams("subcommand is required for glab_ci")
+        }
+        
+        var cmdArgs = ["ci", subcommand]
+        
+        // Add repository if specified
+        if case .string(let repo) = args["repo"] {
+            cmdArgs.append(contentsOf: ["-R", repo])
+        }
+        
+        // Add additional arguments
+        if case .array(let argsArray) = args["args"],
+           let additionalArgs = argsArray.compactMap({ $0.stringValue }) as? [String] {
+            cmdArgs.append(contentsOf: additionalArgs)
+        }
+        
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
+    }
+    
+    private func handleRepo(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let subcommand) = args["subcommand"] else {
+            throw MCPError.invalidParams("subcommand is required for glab_repo")
+        }
+        
+        var cmdArgs = ["repo", subcommand]
+        
+        // Add additional arguments
+        if case .array(let argsArray) = args["args"],
+           let additionalArgs = argsArray.compactMap({ $0.stringValue }) as? [String] {
+            cmdArgs.append(contentsOf: additionalArgs)
+        }
+        
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
+    }
+    
+    private func handleAPI(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let method) = args["method"],
+              case .string(let endpoint) = args["endpoint"] else {
+            throw MCPError.invalidParams("method and endpoint are required for glab_api")
+        }
+        
+        var cmdArgs = ["api", method, endpoint]
+        
+        // Add data if provided
+        if case .string(let data) = args["data"] {
+            cmdArgs.append(contentsOf: ["--raw-field", data])
+        }
+        
+        // Add headers if provided
+        if case .array(let headersArray) = args["headers"],
+           let headers = headersArray.compactMap({ $0.stringValue }) as? [String] {
+            for header in headers {
+                cmdArgs.append(contentsOf: ["--header", header])
+            }
+        }
+        
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
+    }
+    
+    private func handleAuth(args: [String: Value]) async throws -> CallTool.Result {
+        guard case .string(let subcommand) = args["subcommand"] else {
+            throw MCPError.invalidParams("subcommand is required for glab_auth")
+        }
+        
+        var cmdArgs = ["auth", subcommand]
+        
+        // Add additional arguments
+        if case .array(let argsArray) = args["args"],
+           let additionalArgs = argsArray.compactMap({ $0.stringValue }) as? [String] {
+            cmdArgs.append(contentsOf: additionalArgs)
+        }
+        
+        let result = try await gitlabCLI.runCommand(args: cmdArgs)
+        return formatResult(result)
+    }
+    
+    private func handleVersion() async throws -> CallTool.Result {
+        var versionInfo = "GitLab MCP Server (Swift)\n"
+        versionInfo += "========================\n"
+        versionInfo += "MCP Server Version: 0.3.0\n"
+        versionInfo += "Build Date: \(Date().formatted(date: .abbreviated, time: .shortened))\n\n"
+        
+        // Get glab version
+        let result = try await gitlabCLI.runCommand(args: ["version"])
+        if result.success {
+            versionInfo += "GLab CLI Version:\n"
+            versionInfo += result.stdout
+        } else {
+            versionInfo += "GLab CLI: Unable to determine version"
+        }
+        
+        return CallTool.Result(
+            content: [.text(versionInfo)],
+            isError: false
+        )
+    }
+    
+    // MARK: - Helper Methods
     
     private func formatResult(_ result: CommandResult) -> CallTool.Result {
         var response = ""
@@ -387,15 +500,13 @@ actor GitLabMCPServer {
                 } else if stderrLower.contains("permission") || stderrLower.contains("403") {
                     response += "\n\n💡 **Tip**: You don't have permission to perform this action. Check your access rights."
                 } else if stderrLower.contains("no repository") {
-                    response += "\n\n💡 **Tip**: Make sure you're in a Git repository or specify the repository with -R flag."
+                    response += "\n\n💡 **Tip**: Make sure you're in a Git repository or specify the repository with the 'repo' parameter."
                 }
             }
             
             if !result.stdout.isEmpty {
                 response += "\n\nOutput:\n```\n\(result.stdout)\n```"
             }
-            
-            response += "\n\n📚 Use `glab_help` with the command name for usage details, or `glab_examples` for practical examples."
         }
         
         return CallTool.Result(
@@ -404,128 +515,139 @@ actor GitLabMCPServer {
         )
     }
     
-    private func getUsageExamples(for topic: String) -> String {
-        switch topic {
-        case "general":
-            return """
-# GitLab MCP Tool Usage Examples
-
-## Quick Start
-The GitLab MCP provides tools for interacting with GitLab. Here are the most common patterns:
-
-### Tool Naming Convention
-- `glab_mr` - Work with merge requests
-- `glab_issue` - Work with issues  
-- `glab_ci` - Work with CI/CD pipelines
-- `glab_repo` - Work with repositories
-- `glab_raw` - Execute any glab command directly
-
-### Basic Pattern
-Most tools follow this pattern:
-```
-tool_name: glab_{resource}
-parameters:
-  subcommand: "{action}"  # like 'list', 'create', 'view'
-  args: [...]            # additional arguments
-  format: "json"         # optional: get structured output
-```
-
-## Common Tasks
-
-1. **List your merge requests**
-   - Tool: `glab_mr`
-   - Parameters: `{"subcommand": "list", "args": ["--assignee=@me"]}`
-
-2. **Create a new issue**
-   - Tool: `glab_issue`
-   - Parameters: `{"subcommand": "create", "args": ["--title", "Bug: Login fails"]}`
-
-3. **View CI pipeline status**
-   - Tool: `glab_ci`
-   - Parameters: `{"subcommand": "view"}`
-
-4. **Get help for any command**
-   - Tool: `glab_help`
-   - Parameters: `{"command": "mr create"}`
-"""
+    // MARK: - Prompts
+    
+    private func getPrompts() -> ListPrompts.Result {
+        let prompts = [
+            Prompt(
+                name: "mediahuis-mr-check",
+                description: "Check your Mediahuis merge requests. Authenticated as stijn.willems@gitlab.mediahuisgroup.com",
+                arguments: [
+                    .init(name: "repo", description: "Repository path (e.g., 'team/project')", required: false),
+                    .init(name: "state", description: "Filter by state: opened, closed, merged, all", required: false)
+                ]
+            ),
+            Prompt(
+                name: "create-mr",
+                description: "Create a new merge request with proper title and description",
+                arguments: [
+                    .init(name: "title", description: "MR title", required: true),
+                    .init(name: "source_branch", description: "Source branch name", required: true),
+                    .init(name: "target_branch", description: "Target branch (default: main)", required: false),
+                    .init(name: "description", description: "MR description", required: false)
+                ]
+            ),
+            Prompt(
+                name: "daily-standup",
+                description: "Get a summary of your GitLab activity for daily standup",
+                arguments: [
+                    .init(name: "days", description: "Number of days to look back (default: 1)", required: false)
+                ]
+            ),
+            Prompt(
+                name: "review-pipeline",
+                description: "Check CI/CD pipeline status and failures",
+                arguments: [
+                    .init(name: "repo", description: "Repository path", required: false)
+                ]
+            )
+        ]
+        
+        return ListPrompts.Result(prompts: prompts)
+    }
+    
+    private func getPrompt(name: String, arguments: [String: Value]?) async throws -> GetPrompt.Result {
+        switch name {
+        case "mediahuis-mr-check":
+            let repo = arguments?["repo"]?.stringValue ?? ""
+            let state = arguments?["state"]?.stringValue ?? "opened"
             
-        case "mr":
-            return """
-# Merge Request Examples
-
-## List Merge Requests
-```
-Tool: glab_mr
-Parameters: {
-  "subcommand": "list",
-  "args": ["--assignee=@me", "--state=opened"],
-  "format": "json"
-}
-```
-
-## Create a Merge Request
-```
-Tool: glab_mr
-Parameters: {
-  "subcommand": "create",
-  "args": ["--title", "Feature: Add dark mode", "--description", "Implements dark mode toggle"]
-}
-```
-
-## View a Specific MR
-```
-Tool: glab_mr
-Parameters: {
-  "subcommand": "view", 
-  "args": ["123"]  # MR number
-}
-```
-
-## Update MR Description
-```
-Tool: glab_mr
-Parameters: {
-  "subcommand": "update",
-  "args": ["123", "--description", "Updated description here"]
-}
-```
-"""
+            return GetPrompt.Result(
+                description: "Check Mediahuis merge requests",
+                messages: [
+                    .user(.text(text: "Check my merge requests at Mediahuis")),
+                    .assistant(.text(text: """
+                    I'll check your Mediahuis GitLab merge requests. You're authenticated as stijn.willems@gitlab.mediahuisgroup.com.
+                    
+                    Let me fetch your \(state) merge requests\(repo.isEmpty ? "" : " for repository \(repo)").
+                    
+                    Using: glab_mr with subcommand "list" and filters for your assigned MRs.
+                    """))
+                ]
+            )
             
-        case "issue":
-            return """
-# Issue Examples
-
-## List Issues
-```
-Tool: glab_issue
-Parameters: {
-  "subcommand": "list",
-  "args": ["--assignee=@me", "--label=bug"],
-  "format": "json"
-}
-```
-
-## Create an Issue
-```
-Tool: glab_issue
-Parameters: {
-  "subcommand": "create",
-  "args": ["--title", "Bug: Login timeout", "--label", "bug", "--assignee", "@me"]
-}
-```
-
-## Close an Issue
-```
-Tool: glab_issue
-Parameters: {
-  "subcommand": "close",
-  "args": ["45"]
-}
-```
-"""
+        case "create-mr":
+            let title = arguments?["title"]?.stringValue ?? "New Feature"
+            let sourceBranch = arguments?["source_branch"]?.stringValue ?? "feature/new"
+            let targetBranch = arguments?["target_branch"]?.stringValue ?? "main"
+            let description = arguments?["description"]?.stringValue ?? ""
+            
+            return GetPrompt.Result(
+                description: "Create a new merge request",
+                messages: [
+                    .user(.text(text: "Create a merge request: \(title)")),
+                    .assistant(.text(text: """
+                    I'll create a new merge request for you:
+                    - Title: \(title)
+                    - Source: \(sourceBranch) → Target: \(targetBranch)
+                    \(description.isEmpty ? "" : "- Description: \(description)")
+                    
+                    Using: glab_mr with subcommand "create" and the provided details.
+                    """))
+                ]
+            )
+            
+        case "daily-standup":
+            let days = arguments?["days"]?.stringValue ?? "1"
+            
+            return GetPrompt.Result(
+                description: "Gather GitLab activity for daily standup",
+                messages: [
+                    .user(.text(text: "What did I work on for standup?")),
+                    .assistant(.text(text: """
+                    I'll gather your GitLab activity for the daily standup from the last \(days) day(s):
+                    
+                    1. First, I'll check your recent merge requests (created, updated, merged)
+                    2. Then, I'll look at issues you've worked on
+                    3. Finally, I'll check any CI/CD pipeline activities
+                    
+                    This will give you a complete picture of your contributions.
+                    """))
+                ]
+            )
+            
+        case "review-pipeline":
+            let repo = arguments?["repo"]?.stringValue ?? "current repository"
+            
+            return GetPrompt.Result(
+                description: "Review CI/CD pipeline status",
+                messages: [
+                    .user(.text(text: "Check the CI/CD pipeline status")),
+                    .assistant(.text(text: """
+                    I'll review the CI/CD pipeline status for \(repo):
+                    
+                    1. Check the latest pipeline status
+                    2. Identify any failed jobs
+                    3. Look for common failure patterns
+                    4. Suggest fixes if applicable
+                    
+                    Using: glab_ci with subcommand "view" to get detailed pipeline information.
+                    """))
+                ]
+            )
             
         default:
-            return "Topic '\(topic)' not found. Available topics: general, mr, issue, ci, repo, api"
+            throw MCPError.invalidParams("Unknown prompt: \(name)")
         }
+    }
+}
+
+// MARK: - Value Extensions for convenience
+extension Value {
+    var stringValue: String? {
+        if case .string(let str) = self {
+            return str
+        }
+        return nil
     }
 }

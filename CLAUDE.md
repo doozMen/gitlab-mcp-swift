@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a GitLab CLI MCP (Model Context Protocol) Server that wraps the `glab` CLI tool to provide structured access to GitLab functionality through AI assistants.
 
+## Memories and Guidelines
+
+- Remember that on every new install, you add a version number and a change name. The version number needs to be in the command, the Swift command of the argument as well.
+
 ## Common Development Commands
 
 ### Setup and Dependencies
@@ -83,3 +87,4 @@ To add new GitLab operations:
    - Map tool parameters to glab CLI flags
    - Use `--format json` where available
    - Return structured result with success/error info
+```
