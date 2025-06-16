@@ -98,6 +98,17 @@ python src/glab_mcp/server.py
 
 ## Configuration
 
+### Local MCP Configuration
+
+If you cloned this repository, you'll need to create your local MCP configuration:
+
+```bash
+# Create your local MCP configuration from the example template
+cp mcp.json.example mcp.json
+```
+
+This creates a `mcp.json` file with the correct configuration for your local environment. The `mcp.json` file is gitignored to avoid committing machine-specific paths.
+
 ### Claude Desktop
 
 Add to your `claude_desktop_config.json`:

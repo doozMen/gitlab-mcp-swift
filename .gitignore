@@ -155,3 +155,6 @@ ehthumbs.db
 
 # Claude Desktop config (local testing)
 claude_desktop_config.json
+
+# MCP configuration (contains local paths)
+mcp.json

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "glab-mcp": {
+      "command": "python",
+      "args": [
+        "-m",
+        "glab_mcp.server"
+      ],
+      "env": {}
+    }
+  }
+}
