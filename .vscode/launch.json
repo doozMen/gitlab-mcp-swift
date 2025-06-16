@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gitlab-mcp-swift}",
+            "name": "Debug GitLabMCP",
+            "program": "${workspaceFolder:gitlab-mcp-swift}/.build/debug/GitLabMCP",
+            "preLaunchTask": "swift: Build Debug GitLabMCP"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gitlab-mcp-swift}",
+            "name": "Release GitLabMCP",
+            "program": "${workspaceFolder:gitlab-mcp-swift}/.build/release/GitLabMCP",
+            "preLaunchTask": "swift: Build Release GitLabMCP"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gitlab-mcp-swift}",
+            "name": "Debug git-lab-mcp",
+            "program": "${workspaceFolder:gitlab-mcp-swift}/.build/debug/git-lab-mcp",
+            "preLaunchTask": "swift: Build Debug git-lab-mcp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:gitlab-mcp-swift}",
+            "name": "Release git-lab-mcp",
+            "program": "${workspaceFolder:gitlab-mcp-swift}/.build/release/git-lab-mcp",
+            "preLaunchTask": "swift: Build Release git-lab-mcp"
+        }
+    ]
+}

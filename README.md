@@ -1,232 +1,188 @@
-# GitLab CLI MCP Server
+# GitLab MCP Server (Swift)
 
-A dynamic Model Context Protocol (MCP) server that provides seamless integration between AI assistants (like Claude) and GitLab through the `glab` CLI tool. This server automatically discovers all available `glab` commands and exposes them as tools.
+A Model Context Protocol (MCP) server that wraps the GitLab CLI (`glab`) to provide GitLab functionality to AI assistants like Claude Desktop.
 
 ## Features
 
-- 🔄 **Dynamic Command Discovery**: Automatically discovers and exposes all `glab` commands
-- 🔧 **Full GitLab Integration**: Access issues, merge requests, pipelines, repositories, and more
-- 🤖 **AI-Friendly**: Structured JSON responses optimized for AI assistants
-- 🛡️ **Secure**: Uses your existing `glab` authentication
-- 🚀 **Fast**: Direct CLI wrapper with command caching
-- 📦 **Easy Setup**: Simple Python package installation
-- 🔍 **Self-Documenting**: Built-in help tool for exploring commands
-
-## Available Tools
-
-The server dynamically discovers and exposes all `glab` commands as tools. Common tools include:
-
-- `glab_auth` - Manage authentication
-- `glab_issue` - Work with issues
-- `glab_mr` - Manage merge requests
-- `glab_repo` - Work with repositories
-- `glab_ci` - Manage CI/CD pipelines
-- `glab_release` - Manage releases
-- `glab_api` - Make authenticated API requests
-- `glab_help` - Get detailed help for any command
-- `glab_raw` - Execute any glab command with full control
-- And many more...
-
-### Special Tools
-
-- `glab_discover` - Force re-discovery of available commands
-- `glab_help` - Get detailed help for any glab command or subcommand
+- 🚀 **Native Swift implementation** using the official MCP Swift SDK
+- 🔧 **Full GitLab CLI integration** - supports all `glab` commands
+- 🎯 **Smart prompts** for common workflows (merge requests, CI/CD, daily standup)
+- 📊 **JSON output parsing** with fallback to plain text
+- 🔐 **Secure authentication** via system `glab` credentials
+- ⚡ **High performance** with Swift's async/await concurrency
 
 ## Prerequisites
 
-1. **Python 3.9+**
-2. **GitLab CLI (`glab`)** installed and authenticated:
-   ```bash
-   # macOS
-   brew install glab
-   
-   # Linux
-   sudo snap install glab
-   
-   # Authenticate
-   glab auth login
-   ```
+- macOS (Swift 5.9+ installed via Xcode)
+- [glab CLI](https://gitlab.com/gitlab-org/cli) installed and authenticated
+- Claude Desktop or another MCP-compatible client
 
 ## Installation
 
-### From PyPI (Recommended)
+### Quick Install
 
 ```bash
-pip install glab-mcp-server
+# Clone the repository
+git clone https://github.com/yourusername/gitlab-mcp-swift.git
+cd gitlab-mcp-swift
+
+# Run the install script
+./install.sh
 ```
 
-### From Source
+The install script will:
+1. Build the server using Swift Package Manager
+2. Install it to `~/.swiftpm/bin/git-lab-mcp`
+3. Display the configuration for Claude Desktop
+
+### Manual Installation
 
 ```bash
-git clone https://github.com/yourusername/glab-mcp
-cd glab-mcp
-pip install -e .
-```
+# Build the project
+swift build -c release
 
-## Running the Server
-
-**Important**: The MCP server must be running before it can be used by Claude or other AI assistants.
-
-### Start the Server
-
-After installation, run the server using the provided script:
-
-```bash
-python run_server.py
-```
-
-This will start the GitLab MCP server and keep it running. You should see output indicating the server is ready:
-
-```
-Starting GitLab MCP server...
-Server is running. Press Ctrl+C to stop.
-```
-
-Keep this terminal window open while using the MCP with Claude.
-
-### Alternative Methods
-
-You can also run the server directly:
-
-```bash
-# If installed via pip
-python -m glab_mcp
-
-# If running from source
-python src/glab_mcp/server.py
+# Install to a location in your PATH
+cp .build/release/git-lab-mcp ~/.swiftpm/bin/
 ```
 
 ## Configuration
 
-### Local MCP Configuration
-
-If you cloned this repository, you'll need to create your local MCP configuration:
-
-```bash
-# Create your local MCP configuration from the example template
-cp mcp.json.example mcp.json
-```
-
-This creates a `mcp.json` file with the correct configuration for your local environment. The `mcp.json` file is gitignored to avoid committing machine-specific paths.
-
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
+Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "glab": {
-      "command": "python",
-      "args": ["-m", "glab_mcp"],
+    "gitlab": {
+      "command": "/Users/YOUR_USERNAME/.swiftpm/bin/git-lab-mcp",
+      "args": ["--log-level", "info"],
       "env": {
-        "PATH": "/usr/local/bin:/usr/bin:/bin"
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
       }
     }
   }
 }
 ```
 
-Or if you installed from source:
+## Authentication
 
-```json
-{
-  "mcpServers": {
-    "glab": {
-      "command": "python",
-      "args": ["/path/to/glab-mcp/src/glab_mcp/server.py"]
-    }
-  }
-}
-```
-
-### Claude CLI
-
-For the Claude CLI (`claude`), add to your configuration:
+The server uses your existing `glab` CLI authentication:
 
 ```bash
-# In your shell profile (.bashrc, .zshrc, etc.)
-export CLAUDE_MCP_SERVERS='{"glab": {"command": "python", "args": ["-m", "glab_mcp"]}}'
+# Login to GitLab
+glab auth login
+
+# Check authentication status
+glab auth status
 ```
+
+## Available Tools
+
+### Core Tools
+
+- **`glab_mr`** - Merge request operations (list, create, view, merge, approve)
+- **`glab_issue`** - Issue management (list, create, view, close, update)
+- **`glab_ci`** - CI/CD pipeline operations (view, list, run, retry)
+- **`glab_repo`** - Repository operations (clone, fork, view, archive)
+- **`glab_api`** - Direct GitLab API access
+- **`glab_auth`** - Authentication management
+- **`glab_version`** - Version information
+- **`glab_raw`** - Execute any glab command directly
+
+### Prompts
+
+The server includes intelligent prompts for common workflows:
+
+- **`my-mrs`** - Check your merge requests
+- **`create-mr`** - Create a merge request with guided parameters
+- **`daily-standup`** - Gather GitLab activity for daily standups
+- **`review-pipeline`** - Review CI/CD pipeline status
 
 ## Usage Examples
 
-Once configured, you can ask Claude to:
+### Check Your Merge Requests
+```
+Use the prompt "my-mrs" to see all your open merge requests
+```
 
-- "List all open issues in my GitLab project"
-- "Create a new merge request for the feature branch"
-- "Show me the failing pipelines"
-- "Get information about the myorg/myproject repository"
+### Create a Merge Request
+```
+Use the prompt "create-mr" with:
+- title: "Fix: Memory leak in user service"
+- source_branch: "fix/memory-leak"
+- target_branch: "main"
+```
+
+### Run CI/CD Pipeline
+```
+Use tool "glab_ci" with:
+- subcommand: "run"
+- repo: "myteam/myproject"
+```
 
 ## Development
 
-### Setup Development Environment
+### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/glab-mcp
-cd glab-mcp
+git clone https://github.com/yourusername/gitlab-mcp-swift.git
+cd gitlab-mcp-swift
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Build in debug mode
+swift build
 
-# Install in development mode
-pip install -e ".[dev]"
+# Run tests
+swift test
+
+# Build for release
+swift build -c release
 ```
 
-### Running Tests
+### Project Structure
 
-```bash
-pytest
 ```
-
-### Code Quality
-
-```bash
-# Format code
-black src/
-
-# Sort imports
-isort src/
-
-# Type checking
-mypy src/
-```
-
-### Debug Mode
-
-Enable debug logging:
-
-```bash
-export GLAB_MCP_DEBUG=1
+gitlab-mcp-swift/
+├── Sources/
+│   └── GitLabMCP/
+│       ├── GitLabMCPServer.swift    # Main server implementation
+│       ├── GitLabMCPCommand.swift   # CLI entry point
+│       └── GitLabCLI.swift          # GitLab CLI wrapper
+├── Package.swift                     # Swift package manifest
+├── install.sh                        # Installation script
+└── README.md                         # This file
 ```
 
 ## Troubleshooting
 
-### Common Issues
+### Server fails to start
+- Ensure `glab` is installed: `which glab`
+- Check authentication: `glab auth status`
+- Run with debug logging: `--log-level debug`
 
-1. **"glab not found" error**
-   - Ensure `glab` is installed and in your PATH
-   - Add the PATH to your MCP server configuration
+### Commands return "not authenticated"
+- Run `glab auth login` to authenticate
+- For self-hosted instances: `glab auth login --hostname your.gitlab.instance`
 
-2. **Authentication errors**
-   - Run `glab auth status` to check authentication
-   - Re-authenticate with `glab auth login`
-
-3. **Permission errors**
-   - Verify your GitLab token has the necessary permissions
-   - Check repository access rights
+### MCP connection issues
+- Restart Claude Desktop after configuration changes
+- Check the logs in Claude Desktop's developer console
+- Verify the executable path is correct in the configuration
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see LICENSE file for details
 
 ## Acknowledgments
 
-- Built on the [Model Context Protocol](https://github.com/anthropics/mcp)
-- Powered by [GitLab CLI](https://gitlab.com/gitlab-org/cli)
+- Built with the [Model Context Protocol Swift SDK](https://github.com/modelcontextprotocol/swift-sdk)
+- Wraps the excellent [GitLab CLI (glab)](https://gitlab.com/gitlab-org/cli)
+- Inspired by the need for better GitLab integration in AI assistants
