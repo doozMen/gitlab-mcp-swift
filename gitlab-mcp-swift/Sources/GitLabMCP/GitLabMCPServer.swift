@@ -13,7 +13,7 @@ actor GitLabMCPServer {
         
         self.server = Server(
             name: "glab-mcp-dynamic",
-            version: "1.0.0",
+            version: "0.0.1",
             capabilities: .init(
                 prompts: nil,
                 resources: nil,
@@ -30,6 +30,9 @@ actor GitLabMCPServer {
         let transport = StdioTransport(logger: logger)
         try await server.start(transport: transport)
         logger.info("GitLab MCP Server started")
+        
+        // Keep the server running
+        await server.waitUntilCompleted()
     }
     
     private func setupHandlers() async {
