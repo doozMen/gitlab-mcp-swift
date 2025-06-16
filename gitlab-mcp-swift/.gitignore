@@ -1,0 +1,11 @@
+# Swift
+.build/
+*.xcodeproj/
+Package.resolved
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Environment
+.env
