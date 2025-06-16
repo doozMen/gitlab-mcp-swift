@@ -7,7 +7,7 @@ struct GitLabMCPCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "gitlab-mcp",
         abstract: "GitLab MCP Server using Swift SDK - Wraps glab CLI for AI assistants",
-        version: "0.1.0"
+        version: "0.1.1"
     )
     
     @Option(name: .long, help: "Log level (trace, debug, info, notice, warning, error, critical)")
@@ -24,7 +24,7 @@ struct GitLabMCPCommand: AsyncParsableCommand {
         
         let logger = Logger(label: "gitlab-mcp")
         
-        let version = "0.1.0"
+        let version = "0.1.1"
         let buildDate = Date().formatted(date: .abbreviated, time: .shortened)
         
         logger.info("Starting GitLab MCP Server (Swift) v\(version)")

@@ -13,7 +13,7 @@ actor GitLabMCPServer {
         
         self.server = Server(
             name: "glab-mcp-dynamic",
-            version: "0.1.0",
+            version: "0.1.1",
             capabilities: .init(
                 prompts: nil,
                 resources: nil,
@@ -300,6 +300,7 @@ actor GitLabMCPServer {
                 // Extract command name from tool name
                 let command = String(name.dropFirst(5)).replacingOccurrences(of: "_", with: "-")
                 let cmdArgs = buildCommandArgs(command: command, arguments: args)
+                logger.debug("Final command args: \(cmdArgs)")
                 let result = try await gitlabCLI.runCommand(args: cmdArgs, cwd: args["cwd"] as? String)
                 return formatResult(result)
             } else {
@@ -318,13 +319,15 @@ actor GitLabMCPServer {
         
         // Add custom args
         if let customArgs = arguments["args"] as? [String] {
-            // For commands that expect subcommands (mr, issue, etc.), 
-            // if no explicit subcommand was provided and args has elements,
+            // Commands that don't have subcommands (they just take arguments directly)
+            let noSubcommandCommands = ["version", "help", "check-update", "changelog", "completion", "alias", "duo"]
+            
+            // For most commands, if no explicit subcommand was provided and args has elements,
             // check if the first arg looks like a subcommand (not starting with -)
             if arguments["subcommand"] == nil && 
                !customArgs.isEmpty && 
                !customArgs[0].hasPrefix("-") &&
-               ["mr", "issue", "ci", "repo", "auth", "api"].contains(command) {
+               !noSubcommandCommands.contains(command) {
                 // First arg is likely a subcommand
                 args.append(customArgs[0])
                 args.append(contentsOf: Array(customArgs.dropFirst()))
