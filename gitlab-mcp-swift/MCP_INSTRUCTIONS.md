@@ -1,13 +1,13 @@
 # GitLab MCP Server Instructions for AI Assistants
 
 ## Authentication Status
-- **Authenticated User**: stijn.willems@gitlab.mediahuisgroup.com
-- **GitLab Instance**: gitlab.mediahuisgroup.com (Mediahuis corporate GitLab)
-- **Secondary Instance**: gitlab.com (public GitLab - not authenticated)
+- **Important**: User must be authenticated with `glab auth login`
+- **Check Status**: Run `glab auth status` to verify authentication
+- **Multiple Instances**: GitLab supports multiple instances (gitlab.com, self-hosted, etc.)
 
 ## Important Context
-1. **Always specify repository**: Since Mediahuis has many repositories, always use the `repo` parameter or ensure you're in the correct directory
-2. **Authentication is for Mediahuis only**: The authentication works for gitlab.mediahuisgroup.com, not gitlab.com
+1. **Always specify repository**: For users with many repositories, always use the `repo` parameter or ensure you're in the correct directory
+2. **Authentication required**: Ensure user has authenticated with the appropriate GitLab instance
 3. **Use @me for user's items**: When filtering by assignee, use `@me` to get the authenticated user's items
 
 ## Tool Usage Best Practices
@@ -19,7 +19,7 @@ Always begin by using `glab_version` to:
 - Check both MCP and glab CLI versions
 
 ### 2. Merge Request Operations
-For Mediahuis work tracking:
+For work tracking:
 ```json
 // List user's MRs
 {
@@ -27,7 +27,7 @@ For Mediahuis work tracking:
   "arguments": {
     "subcommand": "list",
     "args": ["--assignee=@me", "--state=opened"],
-    "repo": "team/project"  // Always specify for Mediahuis repos
+    "repo": "team/project"  // Always specify for specific repos
   }
 }
 
@@ -73,7 +73,7 @@ When integrating with time tracking systems:
   "tool": "glab_mr",
   "arguments": {
     "subcommand": "list",
-    "repo": "mediahuis/project-name",
+    "repo": "namespace/project-name",
     "args": ["--state=all", "--author=@me"]
   }
 }
@@ -81,12 +81,12 @@ When integrating with time tracking systems:
 
 ### 5. Error Handling
 - **"No repository"**: Add `repo` parameter with format "namespace/project"
-- **"Authentication required"**: User needs to run `glab auth login` for gitlab.com
-- **"Not found"**: Check if the repository path is correct for Mediahuis
+- **"Authentication required"**: User needs to run `glab auth login`
+- **"Not found"**: Check if the repository path is correct
 
 ### 6. Prompts for Common Tasks
 Use the available prompts for guided workflows:
-- `mediahuis-mr-check`: Quick check of user's Mediahuis MRs
+- `my-mrs`: Quick check of user's merge requests
 - `daily-standup`: Gather activity for standup meetings
 - `create-mr`: Step-by-step MR creation
 - `review-pipeline`: Check CI/CD status
@@ -99,10 +99,11 @@ This MCP server is designed to work with intelligent time tracking systems:
 3. **Project mapping**: Map GitLab projects to time tracking projects
 4. **Automatic categorization**: Use labels and MR metadata for categorizing work
 
-## Repository Naming at Mediahuis
-Common patterns:
+## Repository Naming Patterns
+Common patterns across GitLab instances:
 - `team/project-name`
 - `department/service-name`
 - `shared/library-name`
+- `username/personal-project`
 
 Always use the full path including namespace when specifying repositories.

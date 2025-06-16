@@ -9,16 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Prompts support** for common GitLab workflows:
-  - `mediahuis-mr-check` - Check Mediahuis merge requests with authentication context
+  - `my-mrs` - Check user's merge requests with authentication context
   - `create-mr` - Create merge requests with guided parameters
   - `daily-standup` - Gather GitLab activity for daily standup
   - `review-pipeline` - Check CI/CD pipeline status
 - Enhanced tool descriptions with concrete examples
 - Tool annotations for better AI guidance
-- Authentication context in tool descriptions (stijn.willems@gitlab.mediahuisgroup.com)
+- Authentication context in tool descriptions
 
 ### Changed
-- Improved tool descriptions with specific examples for Mediahuis context
+- Improved tool descriptions with specific examples
 - Version command now mentions current authentication
 - Better guidance for AI assistants on how to use each tool
 

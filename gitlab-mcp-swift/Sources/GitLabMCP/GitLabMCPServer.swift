@@ -79,7 +79,7 @@ actor GitLabMCPServer {
             Tool(
                 name: "glab_mr",
                 description: """
-                Work with GitLab merge requests at Mediahuis (authenticated as stijn.willems).
+                Work with GitLab merge requests.
                 Examples:
                 - List your MRs: subcommand="list", args=["--assignee=@me"]
                 - View MR #123: subcommand="view", args=["123"]
@@ -245,7 +245,7 @@ actor GitLabMCPServer {
                 name: "glab_version",
                 description: """
                 Show version information for both the GitLab MCP server and glab CLI.
-                Current authentication: stijn.willems@gitlab.mediahuisgroup.com
+                Shows current authentication status from glab.
                 Always use this first to verify the server is working correctly.
                 """,
                 inputSchema: .object([
@@ -520,8 +520,8 @@ actor GitLabMCPServer {
     private func getPrompts() -> ListPrompts.Result {
         let prompts = [
             Prompt(
-                name: "mediahuis-mr-check",
-                description: "Check your Mediahuis merge requests. Authenticated as stijn.willems@gitlab.mediahuisgroup.com",
+                name: "my-mrs",
+                description: "Check your merge requests (requires authentication)",
                 arguments: [
                     .init(name: "repo", description: "Repository path (e.g., 'team/project')", required: false),
                     .init(name: "state", description: "Filter by state: opened, closed, merged, all", required: false)
@@ -558,7 +558,7 @@ actor GitLabMCPServer {
     
     private func getPrompt(name: String, arguments: [String: Value]?) async throws -> GetPrompt.Result {
         switch name {
-        case "mediahuis-mr-check":
+        case "my-mrs":
             let repo = arguments?["repo"]?.stringValue ?? ""
             let state = arguments?["state"]?.stringValue ?? "opened"
             
@@ -567,7 +567,7 @@ actor GitLabMCPServer {
                 messages: [
                     .user(.text(text: "Check my merge requests at Mediahuis")),
                     .assistant(.text(text: """
-                    I'll check your Mediahuis GitLab merge requests. You're authenticated as stijn.willems@gitlab.mediahuisgroup.com.
+                    I'll check your GitLab merge requests using your current authentication.
                     
                     Let me fetch your \(state) merge requests\(repo.isEmpty ? "" : " for repository \(repo)").
                     
