@@ -2,14 +2,16 @@ import ArgumentParser
 import Logging
 import Foundation
 
+@main
 struct GitLabMCPCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "gitlab-mcp",
-        abstract: "GitLab MCP Server using Swift SDK - Wraps glab CLI for AI assistants"
+        abstract: "GitLab MCP Server using Swift SDK - Wraps glab CLI for AI assistants",
+        version: "0.1.0"
     )
     
     @Option(name: .long, help: "Log level (trace, debug, info, notice, warning, error, critical)")
-    var logLevel: String = "info"
+    var logLevel: String = "debug"
     
     func run() async throws {
         // Setup logging
@@ -22,7 +24,11 @@ struct GitLabMCPCommand: AsyncParsableCommand {
         
         let logger = Logger(label: "gitlab-mcp")
         
-        logger.info("Starting GitLab MCP Server (Swift)")
+        let version = "0.1.0"
+        let buildDate = Date().formatted(date: .abbreviated, time: .shortened)
+        
+        logger.info("Starting GitLab MCP Server (Swift) v\(version)")
+        logger.info("Build: \(buildDate)")
         logger.info("Wrapping glab CLI for Model Context Protocol")
         
         // Pre-warm the command cache
@@ -45,6 +51,3 @@ struct GitLabMCPCommand: AsyncParsableCommand {
         }
     }
 }
-
-// Entry point
-GitLabMCPCommand.main()

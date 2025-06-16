@@ -13,7 +13,7 @@ actor GitLabMCPServer {
         
         self.server = Server(
             name: "glab-mcp-dynamic",
-            version: "0.0.1",
+            version: "0.1.0",
             capabilities: .init(
                 prompts: nil,
                 resources: nil,
@@ -257,9 +257,14 @@ actor GitLabMCPServer {
     private func handleToolCall(name: String, arguments: [String: Any]?) async throws -> CallTool.Result {
         let args = arguments ?? [:]
         
+        // Debug logging
+        logger.debug("Tool call: \(name)")
+        logger.debug("Arguments: \(args)")
+        
         switch name {
         case "glab_raw":
             guard let cmdArgs = args["args"] as? [String] else {
+                logger.error("Failed to get args array from: \(args)")
                 throw MCPError.invalidParams("args array is required")
             }
             let result = try await gitlabCLI.runCommand(args: cmdArgs, cwd: args["cwd"] as? String)
@@ -313,7 +318,19 @@ actor GitLabMCPServer {
         
         // Add custom args
         if let customArgs = arguments["args"] as? [String] {
-            args.append(contentsOf: customArgs)
+            // For commands that expect subcommands (mr, issue, etc.), 
+            // if no explicit subcommand was provided and args has elements,
+            // check if the first arg looks like a subcommand (not starting with -)
+            if arguments["subcommand"] == nil && 
+               !customArgs.isEmpty && 
+               !customArgs[0].hasPrefix("-") &&
+               ["mr", "issue", "ci", "repo", "auth", "api"].contains(command) {
+                // First arg is likely a subcommand
+                args.append(customArgs[0])
+                args.append(contentsOf: Array(customArgs.dropFirst()))
+            } else {
+                args.append(contentsOf: customArgs)
+            }
         }
         
         // Convert common flags

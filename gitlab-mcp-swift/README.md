@@ -19,6 +19,32 @@ A Model Context Protocol (MCP) server that wraps the `glab` CLI tool to provide 
 
 ## Installation
 
+### Option 1: System-wide Installation (Recommended)
+
+1. Clone this repository:
+```bash
+git clone <repository-url>
+cd gitlab-mcp-swift
+```
+
+2. Run the installation script:
+```bash
+./install.sh
+```
+
+This will:
+- Build the project in release mode
+- Remove any existing installation
+- Install the executable to `/usr/local/bin` using `swift package experimental-install`
+- Create a user-friendly symlink `gitlab-mcp`
+
+To uninstall:
+```bash
+./uninstall.sh
+```
+
+### Option 2: Manual Build
+
 1. Clone this repository:
 ```bash
 git clone <repository-url>
@@ -30,18 +56,39 @@ cd gitlab-mcp-swift
 swift build -c release
 ```
 
-3. The executable will be at `.build/release/gitlab-mcp`
+3. The executable will be at `.build/release/GitLabMCP`
+
+### Option 3: Custom Installation Directory
+
+Set the `INSTALL_DIR` environment variable:
+```bash
+INSTALL_DIR=~/bin ./install.sh
+```
 
 ## Configuration for Claude Desktop
 
 Add to your `claude_desktop_config.json`:
 
+### If installed system-wide:
 ```json
 {
   "mcpServers": {
     "gitlab-swift": {
       "type": "stdio",
-      "command": "/path/to/gitlab-mcp-swift/.build/release/gitlab-mcp",
+      "command": "/usr/local/bin/gitlab-mcp",
+      "args": ["--log-level", "info"]
+    }
+  }
+}
+```
+
+### If using manual build:
+```json
+{
+  "mcpServers": {
+    "gitlab-swift": {
+      "type": "stdio",
+      "command": "/path/to/gitlab-mcp-swift/.build/release/GitLabMCP",
       "args": ["--log-level", "info"]
     }
   }

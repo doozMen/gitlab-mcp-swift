@@ -6,6 +6,9 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
+    products: [
+        .executable(name: "git-lab-mcp", targets: ["GitLabMCP"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.9.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
