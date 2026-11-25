@@ -461,7 +461,7 @@ actor GitLabMCPServer {
         }
         
         return CallTool.Result(
-            content: [.text(versionInfo)],
+            content: [.text(text: versionInfo, annotations: nil, _meta: nil)],
             isError: false
         )
     }
@@ -510,7 +510,7 @@ actor GitLabMCPServer {
         }
         
         return CallTool.Result(
-            content: [.text(response)],
+            content: [.text(text: response, annotations: nil, _meta: nil)],
             isError: !result.success
         )
     }
@@ -556,11 +556,11 @@ actor GitLabMCPServer {
         return ListPrompts.Result(prompts: prompts)
     }
     
-    private func getPrompt(name: String, arguments: [String: Value]?) async throws -> GetPrompt.Result {
+    private func getPrompt(name: String, arguments: [String: String]?) async throws -> GetPrompt.Result {
         switch name {
         case "my-mrs":
-            let repo = arguments?["repo"]?.stringValue ?? ""
-            let state = arguments?["state"]?.stringValue ?? "opened"
+            let repo = arguments?["repo"] ?? ""
+            let state = arguments?["state"] ?? "opened"
             
             return GetPrompt.Result(
                 description: "Check Mediahuis merge requests",
@@ -577,10 +577,10 @@ actor GitLabMCPServer {
             )
             
         case "create-mr":
-            let title = arguments?["title"]?.stringValue ?? "New Feature"
-            let sourceBranch = arguments?["source_branch"]?.stringValue ?? "feature/new"
-            let targetBranch = arguments?["target_branch"]?.stringValue ?? "main"
-            let description = arguments?["description"]?.stringValue ?? ""
+            let title = arguments?["title"] ?? "New Feature"
+            let sourceBranch = arguments?["source_branch"] ?? "feature/new"
+            let targetBranch = arguments?["target_branch"] ?? "main"
+            let description = arguments?["description"] ?? ""
             
             return GetPrompt.Result(
                 description: "Create a new merge request",
@@ -598,7 +598,7 @@ actor GitLabMCPServer {
             )
             
         case "daily-standup":
-            let days = arguments?["days"]?.stringValue ?? "1"
+            let days = arguments?["days"] ?? "1"
             
             return GetPrompt.Result(
                 description: "Gather GitLab activity for daily standup",
@@ -617,7 +617,7 @@ actor GitLabMCPServer {
             )
             
         case "review-pipeline":
-            let repo = arguments?["repo"]?.stringValue ?? "current repository"
+            let repo = arguments?["repo"] ?? "current repository"
             
             return GetPrompt.Result(
                 description: "Review CI/CD pipeline status",
